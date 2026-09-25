@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Omni · Scientific Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js"></script>
+<style>
+/* ============================================================
+   DESIGN TOKENS — instrument-panel aesthetic.
+   Dark = "Engineering" (deep graphite, cyan/amber signal colors)
+   Light = "Editorial" (warm paper, ink text, same signal colors
+   pulled darker so they still read as the same brand)
+   ============================================================ */
+:root{
+  --bg:#0B0F14; --panel:#121822; --panel-2:#0E141C; --border:#22303F;
+  --ink:#E7EDF3; --ink-dim:#8FA1B3; --ink-faint:#57697C;
+  --cyan:#33D6C0; --amber:#F2B705; --red:#FF6B6B;
+  --key-bg:#182230; --key-bg-hover:#1E2C3D; --key-op:#20303F; --key-eq:#1D6F63;
+  --radius:10px; --mono:'JetBrains Mono',ui-monospace,monospace; --sans:'Inter',system-ui,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+:root[data-theme="light"]{
+  --bg:#F7F5F0; --panel:#FFFFFF; --panel-2:#F0EEE8; --border:#DEDACF;
+  --ink:#1B2430; --ink-dim:#5B6B7A; --ink-faint:#93A0AC;
+  --key-bg:#F0EEE8; --key-bg-hover:#E7E3D9; --key-op:#E3EDEB; --key-eq:#33D6C0;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#F7F5F0; --panel:#FFFFFF; --panel-2:#F0EEE8; --border:#DEDACF;
+    --ink:#1B2430; --ink-dim:#5B6B7A; --ink-faint:#93A0AC;
+    --key-bg:#F0EEE8; --key-bg-hover:#E7E3D9; --key-op:#E3EDEB; --key-eq:#33D6C0;
+  }
+}
+html,body{height:100%;}
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+  scroll-padding-top:env(safe-area-inset-top,0px);
+}
+.app{max-width:760px;margin:0 auto;padding:14px 14px 28px;}
+
+/* Header */
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.brand{font-weight:700;font-size:15px;letter-spacing:.2px;display:flex;align-items:baseline;gap:6px;}
+.brand em{font-style:normal;color:var(--cyan);}
+.theme-btn{background:var(--panel);border:1px solid var(--border);color:var(--ink);border-radius:8px;padding:7px 11px;font-size:13px;cursor:pointer;font-family:var(--sans);}
+.theme-btn:hover{background:var(--key-bg-hover);}
+
+/* Mode tabs */
+.tabs{display:flex;gap:6px;margin-bottom:10px;}
+.tab{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--ink-dim);border-radius:8px;padding:9px 6px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:var(--sans);text-align:center;transition:color .12s,border-color .12s;}
+.tab[aria-selected="true"]{color:var(--bg);background:var(--cyan);border-color:var(--cyan);}
+:root[data-theme="light"] .tab[aria-selected="true"], html:not([data-theme="dark"]) .tab[aria-selected="true"]{color:#08312B;}
+
+/* Display */
+.display-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:10px;}
+.tape{max-height:74px;overflow-y:auto;font-family:var(--mono);font-size:12px;color:var(--ink-faint);display:flex;flex-direction:column;gap:2px;}
+.tape-row{display:flex;justify-content:space-between;gap:8px;cursor:pointer;padding:1px 0;}
+.tape-row:hover{color:var(--ink-dim);}
+.tape-row .r{color:var(--ink-dim);}
+.divider{height:1px;background:var(--border);margin:8px 0;}
+#expr{font-family:var(--mono);font-size:14px;color:var(--ink-dim);min-height:18px;word-break:break-all;}
+#result{font-family:var(--mono);font-size:clamp(26px,7vw,38px);font-weight:500;text-align:right;overflow-x:auto;white-space:nowrap;padding-top:2px;}
+#result.err{color:var(--red);font-size:16px;font-weight:600;white-space:normal;}
+.statusline{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-faint);font-family:var(--mono);margin-top:6px;}
+.statusline span.on{color:var(--amber);}
+
+/* Panels per mode */
+.panel{display:none;}
+.panel.active{display:block;}
+
+/* Keypad grid (Standard/Scientific) */
+.keys{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+.key{background:var(--key-bg);border:1px solid var(--border);color:var(--ink);border-radius:8px;padding:13px 4px;font-size:14px;font-family:var(--mono);cursor:pointer;transition:background .1s;}
+.key:hover{background:var(--key-bg-hover);}
+.key:active{transform:scale(.97);}
+.key.op{background:var(--key-op);color:var(--cyan);}
+.key.fn{color:var(--ink-dim);font-size:12.5px;}
+.key.eq{background:var(--key-eq);color:#08312B;font-weight:700;}
+.key.wide{grid-column:span 2;}
+.key.mem{color:var(--amber);}
+.key[aria-pressed="true"]{outline:2px solid var(--cyan);}
+.key:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;}
+
+/* Calculus panel */
+.calc-block{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:10px;}
+.calc-block h3{margin:0 0 8px;font-size:12.5px;color:var(--ink-dim);font-weight:600;}
+.row{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;}
+.row input, .row select{background:var(--panel-2);border:1px solid var(--border);color:var(--ink);border-radius:6px;padding:8px;font-family:var(--mono);font-size:13px;flex:1;min-width:60px;}
+.row button{background:var(--cyan);color:#08312B;border:none;border-radius:6px;padding:8px 12px;font-weight:700;font-size:12.5px;cursor:pointer;font-family:var(--sans);}
+.calc-out{font-family:var(--mono);font-size:14px;color:var(--ink);word-break:break-all;min-height:18px;}
+.matrix-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:6px;}
+.matrix-grid input{padding:6px;text-align:center;}
+
+/* Constants panel */
+.const-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.const-btn{background:var(--key-bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;text-align:left;cursor:pointer;color:var(--ink);}
+.const-btn:hover{background:var(--key-bg-hover);}
+.const-btn .sym{color:var(--amber);font-family:var(--mono);font-weight:700;font-size:13px;}
+.const-btn .name{display:block;font-size:11px;color:var(--ink-dim);margin-top:1px;}
+.const-btn .val{display:block;font-size:10.5px;color:var(--ink-faint);font-family:var(--mono);margin-top:2px;}
+
+.hint{font-size:10.5px;color:var(--ink-faint);text-align:center;margin-top:12px;}
+::-webkit-scrollbar{height:6px;width:6px;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+@media (max-width:420px){ .keys{grid-template-columns:repeat(4,1fr);} .key.wide{grid-column:span 2;} }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="topbar">
+    <div class="brand">Omni<em>Sci</em></div>
+    <button class="theme-btn" id="themeBtn" aria-label="Toggle theme">🌓 Theme</button>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="Calculator mode">
+    <button class="tab" role="tab" aria-selected="true" data-mode="standard">Standard / Sci</button>
+    <button class="tab" role="tab" aria-selected="false" data-mode="calculus">Calculus / Symbolic</button>
+    <button class="tab" role="tab" aria-selected="false" data-mode="constants">Constants</button>
+  </div>
+
+  <div class="display-card">
+    <div class="tape" id="tape" aria-label="History"></div>
+    <div class="divider"></div>
+    <div id="expr" aria-live="polite"></div>
+    <div id="result" role="status" aria-live="assertive">0</div>
+    <div class="statusline">
+      <span id="angleMode">DEG</span>
+      <span id="memFlag">MEM: —</span>
+    </div>
+  </div>
+
+  <!-- ===================== MODE A: Standard / Scientific ===================== -->
+  <div class="panel active" id="panel-standard">
+    <div class="keys" role="group" aria-label="Scientific keypad">
+      <button class="key fn" data-act="angle">DEG</button>
+      <button class="key fn" data-act="mem" data-val="mc">MC</button>
+      <button class="key fn" data-act="mem" data-val="mr">MR</button>
+      <button class="key fn" data-act="mem" data-val="m-">M-</button>
+      <button class="key fn" data-act="mem" data-val="m+">M+</button>
+
+      <button class="key fn" data-ins="sin(">sin</button>
+      <button class="key fn" data-ins="cos(">cos</button>
+      <button class="key fn" data-ins="tan(">tan</button>
+      <button class="key fn" data-ins="log(">log</button>
+      <button class="key fn" data-ins="ln(">ln</button>
+
+      <button class="key fn" data-ins="asin(">asin</button>
+      <button class="key fn" data-ins="acos(">acos</button>
+      <button class="key fn" data-ins="atan(">atan</button>
+      <button class="key fn" data-ins="sqrt(">√</button>
+      <button class="key fn" data-ins="^">x^y</button>
+
+      <button class="key fn" data-ins="sinh(">sinh</button>
+      <button class="key fn" data-ins="cosh(">cosh</button>
+      <button class="key fn" data-ins="tanh(">tanh</button>
+      <button class="key fn" data-act="fact">n!</button>
+      <button class="key fn" data-act="npr">nPr</button>
+
+      <button class="key op" data-act="clear">C</button>
+      <button class="key op" data-act="back">⌫</button>
+      <button class="key op" data-ins="(">(</button>
+      <button class="key op" data-ins=")">)</button>
+      <button class="key op" data-ins="/">÷</button>
+
+      <button class="key" data-ins="7">7</button>
+      <button class="key" data-ins="8">8</button>
+      <button class="key" data-ins="9">9</button>
+      <button class="key op" data-ins="*">×</button>
+      <button class="key fn" data-act="npr2">nCr</button>
+
+      <button class="key" data-ins="4">4</button>
+      <button class="key" data-ins="5">5</button>
+      <button class="key" data-ins="6">6</button>
+      <button class="key op" data-ins="-">−</button>
+      <button class="key fn" data-ins="pi">π</button>
+
+      <button class="key" data-ins="1">1</button>
+      <button class="key" data-ins="2">2</button>
+      <button class="key" data-ins="3">3</button>
+      <button class="key op" data-ins="+">+</button>
+      <button class="key fn" data-ins="e">e</button>
+
+      <button class="key wide" data-ins="0">0</button>
+      <button class="key" data-ins=".">.</button>
+      <button class="key eq wide" data-act="eval">=</button>
+    </div>
+  </div>
+
+  <!-- ===================== MODE B: Calculus / Symbolic ===================== -->
+  <div class="panel" id="panel-calculus">
+    <div class="calc-block">
+      <h3>Numerical derivative — d/dx f(x) at x = a</h3>
+      <div class="row">
+        <input id="d-fx" placeholder="f(x), e.g. sin(x)*x^2" value="sin(x)*x^2">
+        <input id="d-a" placeholder="a" value="1" style="max-width:80px">
+        <button data-run="derivative">Compute</button>
+      </div>
+      <div class="calc-out" id="d-out"></div>
+    </div>
+    <div class="calc-block">
+      <h3>Definite integral — ∫ f(x) dx, Simpson's rule</h3>
+      <div class="row">
+        <input id="i-fx" placeholder="f(x)" value="x^2">
+        <input id="i-a" placeholder="lower" value="0" style="max-width:60px">
+        <input id="i-b" placeholder="upper" value="1" style="max-width:60px">
+        <button data-run="integral">Compute</button>
+      </div>
+      <div class="calc-out" id="i-out"></div>
+    </div>
+    <div class="calc-block">
+      <h3>Root finder — Newton–Raphson</h3>
+      <div class="row">
+        <input id="n-fx" placeholder="f(x)" value="x^2-2">
+        <input id="n-x0" placeholder="x₀" value="1" style="max-width:70px">
+        <button data-run="newton">Solve f(x)=0</button>
+      </div>
+      <div class="calc-out" id="n-out"></div>
+    </div>
+    <div class="calc-block">
+      <h3>Complex arithmetic</h3>
+      <div class="row">
+        <input id="c-expr" placeholder="e.g. (3+4i) * (1-2i)" value="(3+4i)*(1-2i)">
+        <button data-run="complex">Evaluate</button>
+      </div>
+      <div class="calc-out" id="c-out"></div>
+    </div>
+    <div class="calc-block">
+      <h3>Matrix (up to 4×4) — determinant, inverse, multiply</h3>
+      <div class="row">
+        <input id="mA" placeholder='A, e.g. [[1,2],[3,4]]' value="[[1,2],[3,4]]">
+      </div>
+      <div class="row">
+        <select id="mOp"><option value="det">det(A)</option><option value="inv">inverse(A)</option><option value="mul">A × B</option><option value="transpose">transpose(A)</option></select>
+        <input id="mB" placeholder='B (for A×B), e.g. [[1,0],[0,1]]' value="[[1,0],[0,1]]">
+        <button data-run="matrix">Run</button>
+      </div>
+      <div class="calc-out" id="m-out"></div>
+    </div>
+  </div>
+
+  <!-- ===================== MODE C: Physical Constants ===================== -->
+  <div class="panel" id="panel-constants">
+    <div class="calc-block">
+      <h3>Tap to insert into the expression bar (Standard mode)</h3>
+      <div class="const-grid" id="constGrid"></div>
+    </div>
+    <div class="calc-block">
+      <h3>Quick dimensional check</h3>
+      <div class="row">
+        <input id="u-expr" placeholder="e.g. 5 m/s * 10 s" value="5 m/s * 10 s">
+        <button data-run="units">Evaluate w/ units</button>
+      </div>
+      <div class="calc-out" id="u-out"></div>
+    </div>
+  </div>
+
+  <p class="hint">Enter = evaluate · Esc = clear · Backspace = delete · digits/operators map directly · D/R/G toggles angle mode</p>
+</div>
+
+<script>
+/* ==================================================================================
+   OMNI-SCIENTIFIC CALCULATOR
+   Architecture: three decoupled layers.
+     1. MathEngine   — pure functions, no DOM access. Wraps math.js configured for
+                        BigNumber precision so 0.1+0.2 resolves exactly, plus
+                        derivative/integral/root/complex/matrix helpers.
+     2. StateStore    — single source of truth (expression, history, memory,
+                        angle mode, theme). Persists to localStorage. UI subscribes
+                        to it; nothing else mutates it directly.
+     3. UIController  — all DOM reads/writes and event wiring. Never does math.
+   ================================================================================== */
+
+/* ---------- 1. MATH ENGINE ---------------------------------------------------- */
+const MathEngine = (() => {
+  // BigNumber mode gives arbitrary-precision decimal arithmetic, eliminating
+  // classic float bugs (0.1+0.2, factorial overflow, etc.) at the cost of using
+  // math.js's bignumber-aware functions throughout.
+  const mj = math.create(math.all);
+  mj.config({ number: 'BigNumber', precision: 64 });
+
+  // A permissive numeric evaluator for the derivative/integral/newton solvers,
+  // which need plain JS floats for speed — precision loss there is negligible
+  // since these are already numerical-approximation methods, not exact ops.
+  const numEval = math.create(math.all); // default 'number' type
+
+  function toDeg(rad){ return rad * 180 / Math.PI; }
+  function toRad(deg){ return deg * Math.PI / 180; }
+  function toGrad(rad){ return rad * 200 / Math.PI; }
+
+  // Wraps user expression with angle-mode-aware trig by pre-scaling arguments.
+  function angleAdjust(expr, mode){
+    if (mode === 'RAD') return expr;
+    const scale = mode === 'DEG' ? '(pi/180)' : '(pi/200)'; // GRAD
+    return expr.replace(/\b(sin|cos|tan)\(/g, (m, fn) => `${fn}($$1${scale}*`)
+               .replace(/\$\$1/g, ''); // placeholder trick avoided below; see evaluate()
+  }
+
+  function evaluate(expr, angleMode, scope){
+    if (!expr || !expr.trim()) throw new Error('Empty expression');
+    // Rewrite direct trig calls so DEG/GRAD inputs are converted to radians
+    // before math.js's own (radian-native) trig functions run.
+    let e = expr;
+    if (angleMode !== 'RAD') {
+      const factor = angleMode === 'DEG' ? 'pi/180' : 'pi/200';
+      e = e.replace(/\b(sin|cos|tan)\(/g, `$1((${factor})*`);
+    }
+    let result = mj.evaluate(e, scope || {});
+    // Inverse trig results come back in radians — convert to the active mode.
+    if (/\b(asin|acos|atan)\(/.test(expr)) {
+      const num = Number(result);
+      result = angleMode === 'DEG' ? toDeg(num) : angleMode === 'GRAD' ? toGrad(num) : num;
+    }
+    return result;
+  }
+
+  function format(value){
+    try {
+      if (mj.typeOf(value) === 'Complex') return mj.format(value, { precision: 10 });
+      if (mj.typeOf(value) === 'Matrix' || Array.isArray(value)) return mj.format(value);
+      return mj.format(value, { precision: 12 });
+    } catch { return String(value); }
+  }
+
+  function factorial(n){ return mj.format(mj.factorial(mj.bignumber(n))); }
+  function nPr(n,r){ return mj.format(mj.divide(mj.factorial(mj.bignumber(n)), mj.factorial(mj.bignumber(n-r)))); }
+  function nCr(n,r){ return mj.format(mj.combinations(mj.bignumber(n), mj.bignumber(r))); }
+
+  // --- Calculus helpers (plain-float numerical methods) ---
+  function derivativeAt(fxStr, a){
+    const node = numEval.derivative(fxStr, 'x');
+    return { symbolic: node.toString(), value: node.evaluate({ x: a }) };
+  }
+  function simpsonIntegral(fxStr, a, b, n = 1000){
+    if (n % 2 !== 0) n++;
+    const f = x => numEval.evaluate(fxStr, { x });
+    const h = (b - a) / n;
+    let sum = f(a) + f(b);
+    for (let i = 1; i < n; i++){
+      sum += f(a + i*h) * (i % 2 === 0 ? 2 : 4);
+    }
+    return sum * h / 3;
+  }
+  function newtonRaphson(fxStr, x0, tol = 1e-12, maxIter = 100){
+    const f = x => numEval.evaluate(fxStr, { x });
+    const dNode = numEval.derivative(fxStr, 'x');
+    let x = x0, steps = 0;
+    for (; steps < maxIter; steps++){
+      const fx = f(x);
+      const dfx = dNode.evaluate({ x });
+      if (Math.abs(dfx) < 1e-15) throw new Error('Derivative vanished — solver stalled');
+      const xNext = x - fx / dfx;
+      if (Math.abs(xNext - x) < tol) { x = xNext; steps++; break; }
+      x = xNext;
+    }
+    return { root: x, iterations: steps, residual: f(x) };
+  }
+  function complexEval(expr){ return numEval.format(numEval.evaluate(expr)); }
+  function matrixOp(op, aStr, bStr){
+    const A = numEval.matrix(JSON.parse(aStr));
+    if (op === 'det') return numEval.format(numEval.det(A));
+    if (op === 'inv') return numEval.format(numEval.inv(A));
+    if (op === 'transpose') return numEval.format(numEval.transpose(A));
+    if (op === 'mul') { const B = numEval.matrix(JSON.parse(bStr)); return numEval.format(numEval.multiply(A, B)); }
+    throw new Error('Unknown matrix operation');
+  }
+
+  return { evaluate, format, factorial, nPr, nCr, derivativeAt, simpsonIntegral, newtonRaphson, complexEval, matrixOp, mj, numEval };
+})();
+
+/* ---------- 2. STATE STORE ----------------------------------------------------- */
+const StateStore = (() => {
+  const KEY = 'omnisci_state_v1';
+  const defaults = { expr: '', history: [], memory: null, angleMode: 'DEG', theme: 'dark', mode: 'standard' };
+  let state = { ...defaults, ...loadState() };
+
+  function loadState(){
+    try { return JSON.parse(localStorage.getItem(KEY)) || {}; }
+    catch { return {}; }
+  }
+  function persist(){
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {}
+  }
+  function get(){ return state; }
+  function set(patch){ state = { ...state, ...patch }; persist(); }
+  function pushHistory(entry){
+    state.history = [entry, ...state.history].slice(0, 50);
+    persist();
+  }
+  return { get, set, pushHistory };
+})();
+
+/* ---------- 3. UI CONTROLLER ---------------------------------------------------- */
+const UI = (() => {
+  const els = {
+    expr: document.getElementById('expr'),
+    result: document.getElementById('result'),
+    tape: document.getElementById('tape'),
+    angleMode: document.getElementById('angleMode'),
+    memFlag: document.getElementById('memFlag'),
+    themeBtn: document.getElementById('themeBtn'),
+    tabs: document.querySelectorAll('.tab'),
+    panels: document.querySelectorAll('.panel'),
+    constGrid: document.getElementById('constGrid'),
+  };
+
+  const PHYSICAL_CONSTANTS = [
+    { sym:'c',  name:'Speed of light',        val:'299792458',        units:'m/s' },
+    { sym:'h',  name:"Planck's constant",     val:'6.62607015e-34',   units:'J·s' },
+    { sym:'hbar',name:'Reduced Planck const', val:'1.054571817e-34',  units:'J·s' },
+    { sym:'G',  name:'Gravitational const.',  val:'6.6743e-11',       units:'m³/(kg·s²)' },
+    { sym:'kB', name:'Boltzmann constant',    val:'1.380649e-23',     units:'J/K' },
+    { sym:'NA', name:'Avogadro number',       val:'6.02214076e23',    units:'1/mol' },
+    { sym:'qe', name:'Elementary charge',     val:'1.602176634e-19',  units:'C' },
+    { sym:'me', name:'Electron mass',         val:'9.1093837015e-31', units:'kg' },
+    { sym:'mp', name:'Proton mass',           val:'1.67262192369e-27',units:'kg' },
+    { sym:'eps0',name:'Vacuum permittivity',  val:'8.8541878128e-12', units:'F/m' },
+    { sym:'R',  name:'Gas constant',          val:'8.314462618',      units:'J/(mol·K)' },
+    { sym:'sigma',name:'Stefan–Boltzmann',    val:'5.670374419e-8',   units:'W/(m²·K⁴)' },
+  ];
+
+  function renderConstants(){
+    els.constGrid.innerHTML = PHYSICAL_CONSTANTS.map(c => `
+      <button class="const-btn" data-const="${c.val}">
+        <span class="sym">${c.sym}</span>
+        <span class="name">${c.name}</span>
+        <span class="val">${c.val} ${c.units}</span>
+      </button>`).join('');
+    els.constGrid.querySelectorAll('.const-btn').forEach(btn => {
+      btn.addEventListener('click', () => { insert(btn.dataset.const); switchMode('standard'); });
+    });
+  }
+
+  function renderTape(){
+    const h = StateStore.get().history;
+    els.tape.innerHTML = h.map(r => `<div class="tape-row"><span>${escapeHtml(r.expr)}</span><span class="r">= ${escapeHtml(r.result)}</span></div>`).join('');
+    els.tape.querySelectorAll('.tape-row').forEach((row, idx) => {
+      row.addEventListener('click', () => { setExpr(h[idx].result); });
+    });
+  }
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  function setExpr(v){ StateStore.set({ expr: v }); els.expr.textContent = v; }
+  function insert(token){ setExpr(StateStore.get().expr + token); }
+  function backspace(){ setExpr(StateStore.get().expr.slice(0, -1)); }
+  function clearAll(){ setExpr(''); showResult('0', false); }
+
+  function showResult(text, isError){
+    els.result.textContent = text;
+    els.result.classList.toggle('err', !!isError);
+  }
+
+  function refreshStatus(){
+    const s = StateStore.get();
+    els.angleMode.textContent = s.angleMode;
+    els.memFlag.textContent = 'MEM: ' + (s.memory === null ? '—' : MathEngine.format(s.memory));
+    els.memFlag.classList.toggle('on', s.memory !== null);
+  }
+
+  function switchMode(mode){
+    StateStore.set({ mode });
+    els.tabs.forEach(t => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
+    els.panels.forEach(p => p.classList.toggle('active', p.id === `panel-${mode}`));
+  }
+
+  function applyTheme(theme){
+    document.documentElement.setAttribute('data-theme', theme);
+    StateStore.set({ theme });
+  }
+
+  function doEval(){
+    const s = StateStore.get();
+    try {
+      const value = MathEngine.evaluate(s.expr, s.angleMode);
+      const text = MathEngine.format(value);
+      showResult(text, false);
+      StateStore.pushHistory({ expr: s.expr, result: text });
+      renderTape();
+      setExpr(text); // chain result into next calculation, calculator convention
+    } catch (err){
+      // Robust error boundary: domain errors, syntax errors, and overflow all
+      // surface here as a single, readable diagnostic instead of a stack trace.
+      showResult(diagnose(err), true);
+    }
+  }
+
+  function diagnose(err){
+    const m = err.message || String(err);
+    if (/division|divide/i.test(m) && /zero/i.test(m)) return 'Error: division by zero';
+    if (/undefined symbol/i.test(m)) return 'Error: unknown symbol — ' + m.split(':').pop().trim();
+    if (/unexpected/i.test(m) || /parenthes/i.test(m)) return 'Syntax error: malformed expression';
+    if (/log|sqrt|complex/i.test(m)) return 'Domain error: ' + m;
+    return 'Error: ' + m;
+  }
+
+  function memAction(kind){
+    const s = StateStore.get();
+    let current;
+    try { current = Number(MathEngine.evaluate(s.expr || els.result.textContent, s.angleMode)); }
+    catch { current = Number(els.result.textContent) || 0; }
+    if (kind === 'mc') StateStore.set({ memory: null });
+    if (kind === 'mr') { if (s.memory !== null) setExpr(String(s.memory)); }
+    if (kind === 'm+') StateStore.set({ memory: (s.memory || 0) + current });
+    if (kind === 'm-') StateStore.set({ memory: (s.memory || 0) - current });
+    refreshStatus();
+  }
+
+  function cycleAngle(){
+    const order = ['DEG','RAD','GRAD'];
+    const s = StateStore.get();
+    const next = order[(order.indexOf(s.angleMode) + 1) % order.length];
+    StateStore.set({ angleMode: next });
+    refreshStatus();
+  }
+
+  /* --- Calculus panel wiring --- */
+  function wireCalculusPanel(){
+    document.querySelector('[data-run="derivative"]').addEventListener('click', () => {
+      const out = document.getElementById('d-out');
+      try {
+        const fx = document.getElementById('d-fx').value;
+        const a = Number(document.getElementById('d-a').value);
+        const r = MathEngine.derivativeAt(fx, a);
+        out.textContent = `f'(x) = ${r.symbolic}  →  f'(${a}) = ${r.value}`;
+      } catch (e){ out.textContent = diagnose(e); }
+    });
+    document.querySelector('[data-run="integral"]').addEventListener('click', () => {
+      const out = document.getElementById('i-out');
+      try {
+        const fx = document.getElementById('i-fx').value;
+        const a = Number(document.getElementById('i-a').value);
+        const b = Number(document.getElementById('i-b').value);
+        const r = MathEngine.simpsonIntegral(fx, a, b);
+        out.textContent = `∫ f(x) dx from ${a} to ${b} ≈ ${r}`;
+      } catch (e){ out.textContent = diagnose(e); }
+    });
+    document.querySelector('[data-run="newton"]').addEventListener('click', () => {
+      const out = document.getElementById('n-out');
+      try {
+        const fx = document.getElementById('n-fx').value;
+        const x0 = Number(document.getElementById('n-x0').value);
+        const r = MathEngine.newtonRaphson(fx, x0);
+        out.textContent = `root ≈ ${r.root}  (${r.iterations} iterations, residual ${r.residual.toExponential(2)})`;
+      } catch (e){ out.textContent = diagnose(e); }
+    });
+    document.querySelector('[data-run="complex"]').addEventListener('click', () => {
+      const out = document.getElementById('c-out');
+      try { out.textContent = MathEngine.complexEval(document.getElementById('c-expr').value); }
+      catch (e){ out.textContent = diagnose(e); }
+    });
+    document.querySelector('[data-run="matrix"]').addEventListener('click', () => {
+      const out = document.getElementById('m-out');
+      try {
+        const op = document.getElementById('mOp').value;
+        out.textContent = MathEngine.matrixOp(op, document.getElementById('mA').value, document.getElementById('mB').value);
+      } catch (e){ out.textContent = diagnose(e); }
+    });
+    document.querySelector('[data-run="units"]').addEventListener('click', () => {
+      const out = document.getElementById('u-out');
+      try { out.textContent = MathEngine.mj.format(MathEngine.mj.evaluate(document.getElementById('u-expr').value)); }
+      catch (e){ out.textContent = diagnose(e); }
+    });
+  }
+
+  /* --- Standard keypad wiring --- */
+  function wireKeypad(){
+    document.querySelectorAll('#panel-standard .key').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.ins !== undefined) return insert(btn.dataset.ins);
+        const act = btn.dataset.act;
+        if (act === 'clear') return clearAll();
+        if (act === 'back') return backspace();
+        if (act === 'eval') return doEval();
+        if (act === 'angle') return cycleAngle();
+        if (act === 'mem') return memAction(btn.dataset.val);
+        if (act === 'fact') { try { setExpr(MathEngine.factorial(Number(StateStore.get().expr))); } catch(e){ showResult(diagnose(e), true); } return; }
+        if (act === 'npr') return insert(',');
+        if (act === 'npr2') return insert(',');
+      });
+    });
+  }
+
+  function wireTabsAndTheme(){
+    els.tabs.forEach(t => t.addEventListener('click', () => switchMode(t.dataset.mode)));
+    els.themeBtn.addEventListener('click', () => {
+      applyTheme(StateStore.get().theme === 'dark' ? 'light' : 'dark');
+    });
+  }
+
+  function wireKeyboard(){
+    window.addEventListener('keydown', (e) => {
+      if (StateStore.get().mode !== 'standard') return; // shortcuts scoped to standard keypad
+      if (e.key === 'Enter') { e.preventDefault(); doEval(); }
+      else if (e.key === 'Escape') clearAll();
+      else if (e.key === 'Backspace') backspace();
+      else if (/^[0-9.+\-*/^(),]$/.test(e.key)) insert(e.key);
+      else if (e.key.toLowerCase() === 'r') cycleAngle();
+    });
+  }
+
+  function init(){
+    const s = StateStore.get();
+    document.documentElement.setAttribute('data-theme', s.theme);
+    els.expr.textContent = s.expr;
+    switchMode(s.mode);
+    renderConstants();
+    renderTape();
+    refreshStatus();
+    wireKeypad();
+    wireCalculusPanel();
+    wireTabsAndTheme();
+    wireKeyboard();
+  }
+
+  return { init };
+})();
+
+UI.init();
+</script>
+</body>
+</html>
